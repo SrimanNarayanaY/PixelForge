@@ -4,3 +4,5 @@ python-dotenv
 huggingface_hub
 pillow
 requests
+imageio[ffmpeg]
+numpy
