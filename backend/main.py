@@ -26,6 +26,8 @@ app.add_middleware(
 
 HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
 
+from video_engine import process_video_generation, ASPECT_RATIOS
+
 PRIMARY_IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell"
 FALLBACK_IMAGE_MODEL = "stabilityai/stable-diffusion-xl-base-1.0"
 VISION_MODEL = "google/gemma-3-12b-it"
@@ -34,6 +36,13 @@ VISION_MODEL = "google/gemma-3-12b-it"
 class GenerateRequest(BaseModel):
     prompt: Optional[str] = ""
     image: Optional[str] = None  # Base64 data URL or string
+
+
+class GenerateVideoRequest(BaseModel):
+    prompt: Optional[str] = ""
+    media: Optional[str] = None  # Base64 image or video data URL
+    duration: int = 5            # 5, 10, 15, 30 seconds
+    aspect_ratio: str = "16:9"   # "16:9", "9:16", "1:1"
 
 
 @app.get("/")
@@ -173,4 +182,103 @@ def generate(req: GenerateRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Image generation failed: {gen_err}",
+        )
+
+
+@app.post("/generate-video")
+def generate_video(req: GenerateVideoRequest):
+    user_prompt = (req.prompt or "").strip()
+    has_media = bool(req.media and req.media.strip())
+
+    if not user_prompt and not has_media:
+        raise HTTPException(
+            status_code=400,
+            detail="Please provide a prompt or upload reference media to generate video.",
+        )
+
+    if not HF_TOKEN:
+        raise HTTPException(
+            status_code=500,
+            detail="Engine token not configured. Please check backend .env file.",
+        )
+
+    # Validate duration & aspect ratio
+    duration = req.duration if req.duration in (5, 10, 15, 30) else 5
+    aspect_ratio = req.aspect_ratio if req.aspect_ratio in ASPECT_RATIOS else "16:9"
+
+    client = InferenceClient(token=HF_TOKEN)
+    reference_pil: Optional[Image.Image] = None
+
+    # Handle reference image/video if provided
+    if has_media:
+        try:
+            raw_media = req.media
+            if "," in raw_media:
+                header, raw_b64 = raw_media.split(",", 1)
+            else:
+                raw_b64 = raw_media
+                header = ""
+
+            media_bytes = base64.b64decode(raw_b64)
+
+            # Check if video (mp4, webm) or image
+            if "video" in header or media_bytes.startswith(b"\x00\x00\x00") or b"ftyp" in media_bytes[:30]:
+                import imageio
+                reader = imageio.get_reader(io.BytesIO(media_bytes), format="mp4")
+                first_frame = reader.get_data(0)
+                reader.close()
+                reference_pil = Image.fromarray(first_frame).convert("RGB")
+            else:
+                reference_pil = Image.open(io.BytesIO(media_bytes)).convert("RGB")
+
+            # Extract visual context via vision model
+            data_uri, _ = prepare_image_data_uri(raw_media if "image" in header else raw_b64)
+            visual_context = analyze_reference_image(client, data_uri)
+            print(f"Extracted video reference context: {visual_context}")
+
+            if user_prompt:
+                final_prompt = (
+                    f"{user_prompt}, cinematic motion continuing from {visual_context}, "
+                    "high resolution, smooth 4k animation"
+                )
+            else:
+                final_prompt = (
+                    f"Cinematic video seamlessly bringing {visual_context} to life, "
+                    "fluid camera motion, photorealistic, 4k"
+                )
+        except Exception as media_err:
+            print(f"Reference media parsing failed: {media_err}")
+            if user_prompt:
+                final_prompt = user_prompt
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Failed to read uploaded media file. Please try another file.",
+                )
+    else:
+        final_prompt = user_prompt
+
+    print(f"Generating video ({duration}s, {aspect_ratio}) with prompt: {final_prompt[:80]}...")
+
+    try:
+        video_uri, model_used = process_video_generation(
+            client=client,
+            prompt=final_prompt,
+            duration=duration,
+            aspect_ratio=aspect_ratio,
+            reference_image=reference_pil,
+        )
+
+        return JSONResponse({
+            "video": video_uri,
+            "duration": duration,
+            "aspect_ratio": aspect_ratio,
+            "model": model_used,
+            "prompt": final_prompt,
+        })
+    except Exception as gen_err:
+        print(f"Video generation endpoint error: {gen_err}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Video generation failed: {gen_err}",
         )
