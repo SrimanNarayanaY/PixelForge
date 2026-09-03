@@ -26,7 +26,7 @@ app.add_middleware(
 
 HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
 
-from video_engine import process_video_generation, ASPECT_RATIOS
+from video_engine import process_video_generation, ASPECT_RATIOS, fetch_resilient_base_image
 
 PRIMARY_IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell"
 FALLBACK_IMAGE_MODEL = "stabilityai/stable-diffusion-xl-base-1.0"
@@ -109,12 +109,17 @@ def analyze_reference_image(client: InferenceClient, data_uri: str) -> str:
 
 
 def generate_flux_image(client: InferenceClient, prompt: str) -> str:
-    """Generate image using FLUX.1 with fallback to SDXL."""
+    """Generate image using FLUX.1 with fallback to SDXL and resilient engine."""
+    img: Optional[Image.Image] = None
     try:
         img = client.text_to_image(prompt, model=PRIMARY_IMAGE_MODEL)
     except Exception as primary_err:
         print(f"Primary model error: {primary_err}. Falling back to SDXL...")
-        img = client.text_to_image(prompt, model=FALLBACK_IMAGE_MODEL)
+        try:
+            img = client.text_to_image(prompt, model=FALLBACK_IMAGE_MODEL)
+        except Exception as fallback_err:
+            print(f"SDXL fallback error: {fallback_err}. Using resilient visual engine...")
+            img = fetch_resilient_base_image(prompt, 1024, 1024)
 
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
