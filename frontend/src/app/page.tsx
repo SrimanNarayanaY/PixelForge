@@ -5,6 +5,9 @@ type StudioMode = "image" | "video";
 type VideoDuration = 5 | 10 | 15 | 30;
 type AspectRatio = "16:9" | "9:16" | "1:1";
 
+const BACKEND_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "") || "http://localhost:7777";
+
 export default function Home() {
   const [studioMode, setStudioMode] = useState<StudioMode>("image");
 
@@ -45,7 +48,7 @@ export default function Home() {
 
   async function checkBackend() {
     try {
-      const res = await fetch("http://localhost:7777/", { method: "GET" });
+      const res = await fetch(`${BACKEND_URL}/`, { method: "GET" });
       setBackendOnline(res.ok);
     } catch {
       setBackendOnline(false);
@@ -117,7 +120,7 @@ export default function Home() {
         payload.image = uploadedImage;
       }
 
-      const res = await fetch("http://localhost:7777/generate", {
+      const res = await fetch(`${BACKEND_URL}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -173,7 +176,7 @@ export default function Home() {
         payload.media = uploadedMedia;
       }
 
-      const res = await fetch("http://localhost:7777/generate-video", {
+      const res = await fetch(`${BACKEND_URL}/generate-video`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -257,7 +260,7 @@ export default function Home() {
               {backendOnline === true
                 ? "PixelEngine Ready"
                 : backendOnline === false
-                ? "Engine Offline (Port 7777)"
+                ? "Engine Offline"
                 : "Connecting engine..."}
             </span>
           </div>
