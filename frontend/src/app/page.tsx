@@ -5,8 +5,10 @@ type StudioMode = "image" | "video";
 type VideoDuration = 5 | 10 | 15 | 30;
 type AspectRatio = "16:9" | "9:16" | "1:1";
 
-const BACKEND_URL =
-  process.env.BACKEND_URL?.replace(/\/$/, "") || "http://localhost:7777";
+// const BACKEND_URL =
+//   process.env.BACKEND_URL?.replace(/\/$/, "") || "http://localhost:7777";
+
+const BACKEND_URL ="http://localhost:7777";
 
 export default function Home() {
   const [studioMode, setStudioMode] = useState<StudioMode>("image");
@@ -19,6 +21,7 @@ export default function Home() {
   const [imageLoading, setImageLoading] = useState(false);
   const [lastImageRef, setLastImageRef] = useState<string | null>(null);
   const [lastImagePrompt, setLastImagePrompt] = useState<string | null>(null);
+  const [lastImageCorrected, setLastImageCorrected] = useState<boolean>(false);
 
   // Video State
   const [videoPrompt, setVideoPrompt] = useState("");
@@ -32,6 +35,7 @@ export default function Home() {
   const [videoStage, setVideoStage] = useState<number>(0);
   const [videoModelUsed, setVideoModelUsed] = useState<string | null>(null);
   const [lastVideoPrompt, setLastVideoPrompt] = useState<string | null>(null);
+  const [lastVideoCorrected, setLastVideoCorrected] = useState<boolean>(false);
   const [lastVideoDuration, setLastVideoDuration] = useState<number>(5);
 
   // General State
@@ -133,7 +137,8 @@ export default function Home() {
 
       setGeneratedImage(`data:image/png;base64,${data.image}`);
       setLastImageRef(uploadedImage);
-      setLastImagePrompt(textToUse);
+      setLastImagePrompt(data.corrected_prompt || textToUse);
+      setLastImageCorrected(Boolean(data.corrected_prompt));
       setStatusMessage(null);
     } catch (err: unknown) {
       console.error(err);
@@ -189,7 +194,8 @@ export default function Home() {
 
       setGeneratedVideo(data.video);
       setVideoModelUsed(data.model || "Hugging Face Video");
-      setLastVideoPrompt(textToUse);
+      setLastVideoPrompt(data.corrected_prompt || textToUse);
+      setLastVideoCorrected(Boolean(data.corrected_prompt));
       setLastVideoDuration(data.duration || videoDuration);
       setStatusMessage(null);
     } catch (err: unknown) {
@@ -844,7 +850,14 @@ export default function Home() {
 
           {lastVideoPrompt && (
             <div className="flex flex-col gap-1 p-3 rounded-xl bg-white/[0.02] border border-white/5 text-xs text-gray-400">
-              <span className="text-[11px] text-gray-500">Video Prompt:</span>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-gray-500">Video Prompt:</span>
+                {lastVideoCorrected && (
+                  <span className="text-[10px] text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                    ✨ Spelling Auto-Corrected
+                  </span>
+                )}
+              </div>
               <p className="text-gray-300 italic">&ldquo;{lastVideoPrompt}&rdquo;</p>
             </div>
           )}
@@ -905,7 +918,14 @@ export default function Home() {
 
           {lastImagePrompt && (
             <div className="flex flex-col gap-1 p-3 rounded-xl bg-white/[0.02] border border-white/5 text-xs text-gray-400">
-              <span className="text-[11px] text-gray-500">Prompt:</span>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-gray-500">Prompt:</span>
+                {lastImageCorrected && (
+                  <span className="text-[10px] text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                    ✨ Spelling Auto-Corrected
+                  </span>
+                )}
+              </div>
               <p className="text-gray-300 italic">&ldquo;{lastImagePrompt}&rdquo;</p>
             </div>
           )}

@@ -27,8 +27,9 @@ app.add_middleware(
 HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
 
 from video_engine import process_video_generation, ASPECT_RATIOS, fetch_resilient_base_image
+from prompt_corrector import correct_prompt
 
-PRIMARY_IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell"
+PRIMARY_IMAGE_MODEL = "black-forest-labs/FLUX.1-dev"
 FALLBACK_IMAGE_MODEL = "stabilityai/stable-diffusion-xl-base-1.0"
 VISION_MODEL = "google/gemma-3-12b-it"
 
@@ -129,14 +130,23 @@ def generate_flux_image(client: InferenceClient, prompt: str) -> str:
 
 @app.post("/generate")
 def generate(req: GenerateRequest):
-    user_prompt = (req.prompt or "").strip()
+    raw_prompt = (req.prompt or "").strip()
     has_image = bool(req.image and req.image.strip())
 
-    if not user_prompt and not has_image:
+    if not raw_prompt and not has_image:
         raise HTTPException(
             status_code=400,
             detail="Please provide a prompt or upload an image to generate.",
         )
+
+    # Automatically fix spelling errors and typos in prompt
+    corrected_prompt = raw_prompt
+    was_corrected = False
+    if raw_prompt:
+        corrected_prompt, was_corrected = correct_prompt(raw_prompt)
+        if was_corrected:
+            print(f"✨ Auto-corrected prompt: '{raw_prompt}' -> '{corrected_prompt}'")
+    user_prompt = corrected_prompt
 
     if not HF_TOKEN:
         raise HTTPException(
@@ -181,7 +191,11 @@ def generate(req: GenerateRequest):
 
     try:
         b64_output = generate_flux_image(client, final_prompt)
-        return JSONResponse({"image": b64_output})
+        return JSONResponse({
+            "image": b64_output,
+            "prompt": final_prompt,
+            "corrected_prompt": corrected_prompt if was_corrected else None,
+        })
     except Exception as gen_err:
         print(f"Generation failed: {gen_err}")
         raise HTTPException(
@@ -192,14 +206,23 @@ def generate(req: GenerateRequest):
 
 @app.post("/generate-video")
 def generate_video(req: GenerateVideoRequest):
-    user_prompt = (req.prompt or "").strip()
+    raw_prompt = (req.prompt or "").strip()
     has_media = bool(req.media and req.media.strip())
 
-    if not user_prompt and not has_media:
+    if not raw_prompt and not has_media:
         raise HTTPException(
             status_code=400,
             detail="Please provide a prompt or upload reference media to generate video.",
         )
+
+    # Automatically fix spelling errors and typos in video prompt
+    corrected_prompt = raw_prompt
+    was_corrected = False
+    if raw_prompt:
+        corrected_prompt, was_corrected = correct_prompt(raw_prompt)
+        if was_corrected:
+            print(f"✨ Auto-corrected video prompt: '{raw_prompt}' -> '{corrected_prompt}'")
+    user_prompt = corrected_prompt
 
     if not HF_TOKEN:
         raise HTTPException(
@@ -280,6 +303,7 @@ def generate_video(req: GenerateVideoRequest):
             "aspect_ratio": aspect_ratio,
             "model": model_used,
             "prompt": final_prompt,
+            "corrected_prompt": corrected_prompt if was_corrected else None,
         })
     except Exception as gen_err:
         print(f"Video generation endpoint error: {gen_err}")
