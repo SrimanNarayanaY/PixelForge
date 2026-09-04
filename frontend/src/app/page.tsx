@@ -6,7 +6,7 @@ type VideoDuration = 5 | 10 | 15 | 30;
 type AspectRatio = "16:9" | "9:16" | "1:1";
 
 const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "") || "http://localhost:7777";
+  process.env.BACKEND_URL?.replace(/\/$/, "") || "http://localhost:7777";
 
 export default function Home() {
   const [studioMode, setStudioMode] = useState<StudioMode>("image");
