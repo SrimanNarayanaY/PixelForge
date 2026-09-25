@@ -5,7 +5,7 @@ type StudioMode = "image" | "video";
 type VideoDuration = 5 | 10 | 15 | 30;
 type AspectRatio = "16:9" | "9:16" | "1:1";
 
-export type ImageModelKey = "flux" | "flux-realism" | "flux-anime" | "flux-3d" | "turbo";
+export type ImageModelKey = "flux" | "sd35" | "flux-realism" | "flux-anime" | "flux-3d" | "turbo";
 
 export interface ImageModelOption {
   id: ImageModelKey;
@@ -19,9 +19,16 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   {
     id: "flux",
     name: "FLUX.1 Schnell",
-    badge: "Ultra-HD Realistic",
+    badge: "Black Forest Labs",
     icon: "🌟",
-    desc: "Top fidelity, lifelike humans, intricate details & lighting",
+    desc: "Breathtaking photorealism, lifelike human eyes, skin & hair",
+  },
+  {
+    id: "sd35",
+    name: "SD 3.5 Large",
+    badge: "Stability AI Flagship",
+    icon: "💎",
+    desc: "Studio cinematic lighting, highest resolution & fine details",
   },
   {
     id: "flux-realism",
@@ -33,9 +40,9 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   {
     id: "flux-anime",
     name: "FLUX Anime",
-    badge: "Manga & Anime",
+    badge: "Makoto Shinkai Style",
     icon: "🎨",
-    desc: "Japanese anime style, rich colors & Makoto Shinkai aesthetics",
+    desc: "Japanese anime style, rich colors & visual aesthetics",
   },
   {
     id: "flux-3d",
@@ -47,7 +54,7 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   {
     id: "turbo",
     name: "Turbo Speed",
-    badge: "Instant Generation",
+    badge: "Fast Preview",
     icon: "⚡",
     desc: "Lightning fast preview & ideation engine",
   },
@@ -512,7 +519,7 @@ export default function Home() {
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                 {IMAGE_MODELS.map((m) => {
                   const isSelected = selectedImageModel === m.id;
                   return (

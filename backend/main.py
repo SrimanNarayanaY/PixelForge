@@ -110,30 +110,12 @@ def analyze_reference_image(client: InferenceClient, data_uri: str) -> str:
         return "a visual scene matching the uploaded reference image"
 
 
-IMAGE_MODEL_NAMES = {
-    "flux": "FLUX.1 Schnell (Photorealistic)",
-    "flux-realism": "FLUX Realism (Cinematic)",
-    "flux-anime": "FLUX Anime (Manga Studio)",
-    "flux-3d": "FLUX 3D (Pixar CGI)",
-    "turbo": "Turbo Speed (Fast)",
-}
+from image_engine import generate_flagship_image
 
 
 def generate_flux_image(client: Optional[InferenceClient], prompt: str, model: str = "flux") -> tuple[str, str]:
-    """Generate image using requested FLUX model with prompt enrichment and watermark removal."""
-    img: Optional[Image.Image] = None
-    model_name = IMAGE_MODEL_NAMES.get(model, "FLUX.1 Schnell")
-
-    try:
-        img = fetch_resilient_base_image(prompt, 1024, 1024, model=model)
-    except Exception as err:
-        print(f"Direct generation error: {err}. Retrying with base FLUX...")
-        img = fetch_resilient_base_image(prompt, 1024, 1024, model="flux")
-
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
-    buffer.seek(0)
-    return base64.b64encode(buffer.getvalue()).decode("utf-8"), model_name
+    """Generate image using flagship FLUX.1 Schnell and SD 3.5 Large models."""
+    return generate_flagship_image(prompt, model=model, width=1024, height=1024)
 
 
 @app.post("/generate")
