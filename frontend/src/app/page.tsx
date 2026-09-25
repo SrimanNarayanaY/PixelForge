@@ -5,6 +5,54 @@ type StudioMode = "image" | "video";
 type VideoDuration = 5 | 10 | 15 | 30;
 type AspectRatio = "16:9" | "9:16" | "1:1";
 
+export type ImageModelKey = "flux" | "flux-realism" | "flux-anime" | "flux-3d" | "turbo";
+
+export interface ImageModelOption {
+  id: ImageModelKey;
+  name: string;
+  badge: string;
+  icon: string;
+  desc: string;
+}
+
+export const IMAGE_MODELS: ImageModelOption[] = [
+  {
+    id: "flux",
+    name: "FLUX.1 Schnell",
+    badge: "Ultra-HD Realistic",
+    icon: "🌟",
+    desc: "Top fidelity, lifelike humans, intricate details & lighting",
+  },
+  {
+    id: "flux-realism",
+    name: "FLUX Realism",
+    badge: "Cinematic Portrait",
+    icon: "📸",
+    desc: "Authentic camera depth, natural skin tones & real-world textures",
+  },
+  {
+    id: "flux-anime",
+    name: "FLUX Anime",
+    badge: "Manga & Anime",
+    icon: "🎨",
+    desc: "Japanese anime style, rich colors & Makoto Shinkai aesthetics",
+  },
+  {
+    id: "flux-3d",
+    name: "FLUX 3D CGI",
+    badge: "Pixar / Disney 3D",
+    icon: "🔮",
+    desc: "Stylized 3D animation, Disney & Pixar render quality",
+  },
+  {
+    id: "turbo",
+    name: "Turbo Speed",
+    badge: "Instant Generation",
+    icon: "⚡",
+    desc: "Lightning fast preview & ideation engine",
+  },
+];
+
 const BACKEND_URL =
   process.env.BACKEND_URL?.replace(/\/$/, "") || "http://localhost:7777";
 
@@ -15,6 +63,8 @@ export default function Home() {
 
   // Image State
   const [imagePrompt, setImagePrompt] = useState("");
+  const [selectedImageModel, setSelectedImageModel] = useState<ImageModelKey>("flux");
+  const [lastImageModelUsed, setLastImageModelUsed] = useState<string>("FLUX.1 Schnell (Photorealistic)");
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [uploadedImageName, setUploadedImageName] = useState<string | null>(null);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
@@ -117,8 +167,9 @@ export default function Home() {
     setStatusMessage("Forging your artwork with FLUX.1...");
 
     try {
-      const payload: { prompt: string; image?: string } = {
+      const payload: { prompt: string; image?: string; model?: string } = {
         prompt: textToUse,
+        model: selectedImageModel,
       };
       if (uploadedImage) {
         payload.image = uploadedImage;
@@ -139,6 +190,9 @@ export default function Home() {
       setLastImageRef(uploadedImage);
       setLastImagePrompt(data.corrected_prompt || textToUse);
       setLastImageCorrected(Boolean(data.corrected_prompt));
+      if (data.model) {
+        setLastImageModelUsed(data.model);
+      }
       setStatusMessage(null);
     } catch (err: unknown) {
       console.error(err);
@@ -441,6 +495,53 @@ export default function Home() {
                   </button>
                 </div>
               )}
+            </div>
+
+            {/* AI Model Selector */}
+            <div className="w-full flex flex-col gap-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-gray-300 flex items-center gap-1.5">
+                  <span>🤖</span>
+                  <span>AI Visual Model</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">
+                    100% Free
+                  </span>
+                </span>
+                <span className="text-[11px] text-gray-400 hidden sm:inline">
+                  Selected: <strong className="text-cyan-300 font-medium">{IMAGE_MODELS.find(m => m.id === selectedImageModel)?.name}</strong>
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                {IMAGE_MODELS.map((m) => {
+                  const isSelected = selectedImageModel === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setSelectedImageModel(m.id)}
+                      className={`p-2.5 rounded-xl border text-left flex flex-col gap-1 transition-all duration-200 cursor-pointer ${
+                        isSelected
+                          ? "border-cyan-400 bg-cyan-950/40 shadow-[0_0_15px_rgba(6,182,212,0.3)] ring-1 ring-cyan-400/50"
+                          : "border-white/10 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/20"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <span className="text-base">{m.icon}</span>
+                        {isSelected && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_6px_#22d3ee]"></span>
+                        )}
+                      </div>
+                      <span className={`text-xs font-semibold truncate ${isSelected ? "text-cyan-200" : "text-gray-200"}`}>
+                        {m.name}
+                      </span>
+                      <span className="text-[10px] text-gray-400 line-clamp-1 leading-tight">
+                        {m.badge}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Prompt Input */}
@@ -868,10 +969,13 @@ export default function Home() {
       {generatedImage && studioMode === "image" && (
         <div className="relative z-10 mt-8 p-4 sm:p-5 rounded-3xl border border-white/10 bg-white/[0.04] backdrop-blur-2xl shadow-2xl max-w-2xl w-full flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-500">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-semibold text-emerald-400">✓ Creation Complete</span>
+              <span className="text-[10px] px-2 py-0.5 rounded-md bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-medium">
+                {lastImageModelUsed}
+              </span>
               <span className="text-[10px] px-2 py-0.5 rounded-md bg-white/10 text-gray-300 font-medium">
-                PixelForge HD
+                No Watermark • 100% Clean
               </span>
             </div>
             <a
