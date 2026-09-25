@@ -26,7 +26,7 @@ app.add_middleware(
 
 HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
 
-from video_engine import process_video_generation, ASPECT_RATIOS, fetch_resilient_base_image
+from video_engine import process_video_generation, ASPECT_RATIOS
 from prompt_corrector import correct_prompt
 
 PRIMARY_IMAGE_MODEL = "black-forest-labs/FLUX.1-dev"
@@ -45,6 +45,8 @@ class GenerateVideoRequest(BaseModel):
     media: Optional[str] = None  # Base64 image or video data URL
     duration: int = 5            # 5, 10, 15, 30 seconds
     aspect_ratio: str = "16:9"   # "16:9", "9:16", "1:1"
+    model: Optional[str] = "wan-2.7"  # "wan-2.7", "seedance-pro", "ltx-video", "veo", "cinematic-fx"
+    api_key: Optional[str] = None
 
 
 @app.get("/")
@@ -281,12 +283,14 @@ def generate_video(req: GenerateVideoRequest):
     print(f"Generating video ({duration}s, {aspect_ratio}) with prompt: {final_prompt[:80]}...")
 
     try:
-        video_uri, model_used = process_video_generation(
+        video_uri, model_used, notice = process_video_generation(
             client=client,
             prompt=final_prompt,
             duration=duration,
             aspect_ratio=aspect_ratio,
             reference_image=reference_pil,
+            model=req.model or "wan-2.7",
+            api_key=req.api_key,
         )
 
         return JSONResponse({
@@ -296,6 +300,7 @@ def generate_video(req: GenerateVideoRequest):
             "model": model_used,
             "prompt": final_prompt,
             "corrected_prompt": corrected_prompt if was_corrected else None,
+            "notice": notice,
         })
     except Exception as gen_err:
         print(f"Video generation endpoint error: {gen_err}")

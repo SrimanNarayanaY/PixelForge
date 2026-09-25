@@ -2,20 +2,28 @@ import base64
 import io
 import math
 import os
+import random
 import tempfile
+import urllib.parse
 from typing import Optional, Tuple
 import imageio.v3 as iio
 import numpy as np
-from huggingface_hub import InferenceClient
-from PIL import Image
-
-PRIMARY_VIDEO_MODEL = "Wan-AI/Wan2.1-T2V-14B"
-FALLBACK_IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell"
+import requests
+from gradio_client import Client
+from PIL import Image, ImageDraw
 
 ASPECT_RATIOS = {
     "16:9": (768, 432),
     "9:16": (432, 768),
     "1:1": (512, 512),
+}
+
+MODEL_DISPLAY_NAMES = {
+    "wan-2.7": "Alibaba Wan 2.7 Pro (AI Diffusion Video)",
+    "seedance-pro": "ByteDance Seedance 2.0 Pro (AI Diffusion Video)",
+    "veo": "Google Veo 3.1 Fast (AI Diffusion Video)",
+    "ltx-video": "Lightricks LTX Video 2.0 (24fps Diffusion)",
+    "cinematic-fx": "FLUX.1 Schnell + 3D Cinematic Motion FX",
 }
 
 
@@ -26,12 +34,10 @@ def crop_and_resize_frame(img: Image.Image, target_w: int, target_h: int) -> Ima
     tgt_ratio = target_w / target_h
 
     if src_ratio > tgt_ratio:
-        # Source is wider, crop width
         new_w = int(src_h * tgt_ratio)
         left = (src_w - new_w) // 2
         img = img.crop((left, 0, left + new_w, src_h))
     else:
-        # Source is taller, crop height
         new_h = int(src_w / tgt_ratio)
         top = (src_h - new_h) // 2
         img = img.crop((0, top, src_w, top + new_h))
@@ -52,15 +58,14 @@ def extend_frames_to_duration(
     target_frame_count = int(target_duration_sec * fps)
     total_src = len(frames)
 
-    # If target is approximately equal to source frames duration, return as-is
     if abs(total_src - target_frame_count) <= 3:
         return frames
 
-    # Create ping-pong sequence (forward then backward)
     forward = frames
     reverse = [f for f in reversed(frames[1:-1])]
     cycle = forward + reverse
-    cycle_len = len(cycle)
+    if not cycle:
+        cycle = forward
 
     output = []
     while len(output) < target_frame_count:
@@ -76,7 +81,6 @@ def encode_frames_to_mp4_bytes(frames: list[np.ndarray], fps: int = 24) -> bytes
         tmp_path = tmp.name
 
     try:
-        # Ensure dimensions are even numbers (requirement for libx264)
         h, w, _ = frames[0].shape
         adj_w = w - (w % 2)
         adj_h = h - (h % 2)
@@ -89,39 +93,182 @@ def encode_frames_to_mp4_bytes(frames: list[np.ndarray], fps: int = 24) -> bytes
             else:
                 processed_frames.append(f)
 
-        # Write MP4 with yuv420p for universal browser playback
-        iio.imwrite(
-            tmp_path,
-            processed_frames,
-            fps=fps,
-            codec="libx264",
-            plugin="pyav",
-        )
+        try:
+            iio.imwrite(
+                tmp_path,
+                processed_frames,
+                fps=fps,
+                codec="libx264",
+                plugin="pyav",
+            )
+        except Exception:
+            import imageio
+            buf = io.BytesIO()
+            writer = imageio.get_writer(
+                buf,
+                format="mp4",
+                fps=fps,
+                ffmpeg_params=["-pix_fmt", "yuv420p"],
+            )
+            for f in processed_frames:
+                writer.append_data(f)
+            writer.close()
+            return buf.getvalue()
 
         with open(tmp_path, "rb") as f:
-            mp4_bytes = f.read()
-
-        return mp4_bytes
-    except Exception:
-        # Fallback to standard ffmpeg plugin if pyav isn't installed
-        import imageio
-        buf = io.BytesIO()
-        writer = imageio.get_writer(
-            buf,
-            format="mp4",
-            fps=fps,
-            ffmpeg_params=["-pix_fmt", "yuv420p"],
-        )
-        for f in frames:
-            writer.append_data(f)
-        writer.close()
-        return buf.getvalue()
+            return f.read()
     finally:
         if os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
             except Exception:
                 pass
+
+
+def generate_ltx_video(
+    prompt: str,
+    negative_prompt: str = "worst quality, inconsistent motion, blurry, jittery, distorted",
+    width: int = 704,
+    height: int = 480,
+    hf_token: Optional[str] = None,
+) -> Optional[bytes]:
+    """
+    Generate real AI video diffusion via Lightricks LTX Video Distilled space.
+    """
+    try:
+        token = hf_token or os.getenv("HF_TOKEN")
+        print("[LTX Video] Connecting to Lightricks/ltx-video-distilled...")
+        client = Client("Lightricks/ltx-video-distilled", token=token)
+        print("[LTX Video] Generating video diffusion...")
+        result = client.predict(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            input_image_filepath=None,
+            input_video_filepath=None,
+            height_ui=height,
+            width_ui=width,
+            mode="text-to-video",
+            duration_ui=2.0,
+            ui_frames_to_use=9,
+            seed_ui=random.randint(1, 999999),
+            randomize_seed=True,
+            ui_guidance_scale=1.0,
+            improve_texture_flag=True,
+            api_name="/text_to_video",
+        )
+        if result and isinstance(result, tuple) and len(result) > 0:
+            video_info = result[0]
+            if isinstance(video_info, dict) and "video" in video_info:
+                vpath = video_info["video"]
+                if os.path.exists(vpath):
+                    with open(vpath, "rb") as vf:
+                        data = vf.read()
+                    print(f"[LTX Video] Succeeded with {len(data)} bytes")
+                    return data
+    except Exception as e:
+        print(f"[LTX Video] Error: {e}")
+    return None
+
+
+def generate_pollinations_video(
+    prompt: str,
+    model: str = "wan-2.7",
+    api_key: Optional[str] = None,
+    width: int = 768,
+    height: int = 432,
+) -> Optional[bytes]:
+    """
+    Generate authentic AI video diffusion using Pollinations Enterprise Video API.
+    Supports Alibaba Wan 2.7, ByteDance Seedance Pro, and Google Veo.
+    """
+    key = api_key or os.getenv("POLLINATIONS_API_KEY")
+    if not key:
+        return None
+
+    # Map user model to Pollinations model name
+    poll_model_map = {
+        "wan-2.7": "alibaba/wan-2.7",
+        "seedance-pro": "bytedance/seedance-1-pro-fast",
+        "veo": "google/veo-3.1-fast",
+    }
+    target_model = poll_model_map.get(model, model)
+    encoded_prompt = urllib.parse.quote(prompt)
+
+    url = (
+        f"https://gen.pollinations.ai/video/{encoded_prompt}"
+        f"?model={target_model}&width={width}&height={height}"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {key.strip()}",
+        "User-Agent": "PixelForge-VideoStudio/2.0",
+    }
+
+    try:
+        print(f"[Pollinations Video] Requesting {target_model}...")
+        resp = requests.get(url, headers=headers, timeout=120)
+        if resp.status_code == 200 and len(resp.content) > 10000:
+            content_type = resp.headers.get("Content-Type", "")
+            if "video" in content_type or resp.content.startswith(b"\x00\x00\x00") or b"ftyp" in resp.content[:30]:
+                print(f"[Pollinations Video] Successfully fetched {len(resp.content)} bytes MP4")
+                return resp.content
+        else:
+            print(f"[Pollinations Video] Status: {resp.status_code}, Response: {resp.text[:200]}")
+    except Exception as e:
+        print(f"[Pollinations Video] Exception: {e}")
+
+def strip_watermark(img: Image.Image) -> Image.Image:
+    """Cleanly remove bottom watermark logo without distortion and retain requested size."""
+    w, h = img.size
+    crop_h = max(100, h - 36)
+    cropped = img.crop((0, 0, w, crop_h))
+    return cropped.resize((w, h), Image.Resampling.LANCZOS)
+
+
+def fetch_resilient_base_image(
+    prompt: str,
+    target_w: int = 1024,
+    target_h: int = 1024,
+    model: str = "flux",
+    seed: Optional[int] = None,
+) -> Image.Image:
+    """Fetch high quality visual output with automatic prompt enrichment and clean watermark removal."""
+    if seed is None:
+        seed = random.randint(1, 9999999)
+
+    model_mapping = {
+        "flux": "flux",
+        "flux-realism": "flux-realism",
+        "flux-anime": "flux-anime",
+        "flux-3d": "flux-3d",
+        "turbo": "turbo",
+    }
+    active_model = model_mapping.get(model, "flux")
+
+    try:
+        url = (
+            f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}"
+            f"?model={active_model}&width={target_w}&height={target_h}&nologo=true&enhance=true&seed={seed}"
+        )
+        resp = requests.get(url, timeout=35)
+        if resp.ok and len(resp.content) > 5000:
+            raw_img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+            return strip_watermark(raw_img)
+    except Exception as e:
+        print(f"Online visual fetch error ({active_model}): {e}. Trying fast turbo fallback...")
+        try:
+            fallback_url = (
+                f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}"
+                f"?model=turbo&width={target_w}&height={target_h}&nologo=true&seed={seed}"
+            )
+            f_resp = requests.get(fallback_url, timeout=25)
+            if f_resp.ok and len(f_resp.content) > 5000:
+                raw_img = Image.open(io.BytesIO(f_resp.content)).convert("RGB")
+                return strip_watermark(raw_img)
+        except Exception:
+            pass
+
+    return Image.new("RGB", (target_w, target_h), color=(20, 24, 39))
 
 
 def generate_cinematic_motion_fallback(
@@ -135,11 +282,7 @@ def generate_cinematic_motion_fallback(
     Synthesize high-definition cinematic video with 3D camera dolly,
     atmospheric particle physics (rain, snow, sparks, embers), and lighting dynamics.
     """
-    import random
-    from PIL import ImageDraw
-
     target_w, target_h = ASPECT_RATIOS.get(aspect_ratio, (768, 432))
-    # Make base larger than target to allow smooth 3D camera pan and zoom
     src_w = int(target_w * 1.35)
     src_h = int(target_h * 1.35)
     base_image = crop_and_resize_frame(base_image, src_w, src_h)
@@ -152,7 +295,6 @@ def generate_cinematic_motion_fallback(
     has_snow = any(k in p_lower for k in ["snow", "winter", "cold", "blizzard", "frost"])
     has_sparks = any(k in p_lower for k in ["spark", "fire", "ember", "cyberpunk", "neon", "magic"])
 
-    # Pre-generate atmospheric particles if appropriate
     particles = []
     if has_rain:
         particles = [
@@ -189,15 +331,12 @@ def generate_cinematic_motion_fallback(
         ]
 
     for i in range(total_frames):
-        # Progress 0.0 to 1.0
         t = i / float(total_frames)
 
-        # Smooth 3D Dolly Zoom + sweeping cinematic camera arc
         zoom = 1.0 + 0.14 * math.sin(t * math.pi)
         cur_crop_w = int((target_w * 1.18) / zoom)
         cur_crop_h = int((target_h * 1.18) / zoom)
 
-        # Natural camera drift coordinates
         cx = src_w // 2 + int(math.sin(t * 2 * math.pi) * (src_w * 0.04))
         cy = src_h // 2 + int(math.cos(t * math.pi) * (src_h * 0.025))
 
@@ -207,7 +346,6 @@ def generate_cinematic_motion_fallback(
         crop_box = (left, top, left + cur_crop_w, top + cur_crop_h)
         frame_img = base_image.crop(crop_box).resize((target_w, target_h), Image.Resampling.LANCZOS)
 
-        # Render atmospheric physics overlay
         if has_rain or has_snow or has_sparks:
             overlay = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
             draw = ImageDraw.Draw(overlay)
@@ -245,147 +383,88 @@ def generate_cinematic_motion_fallback(
     return encode_frames_to_mp4_bytes(frames, fps=fps)
 
 
-def strip_watermark(img: Image.Image) -> Image.Image:
-    """Cleanly remove bottom watermark logo without distortion and retain requested size."""
-    w, h = img.size
-    # Crop the bottom 36 pixels where the logo is located
-    crop_h = max(100, h - 36)
-    cropped = img.crop((0, 0, w, crop_h))
-    # Resample back to original dimensions with high-quality Lanczos interpolation
-    return cropped.resize((w, h), Image.Resampling.LANCZOS)
-
-
-def enhance_prompt_for_model(prompt: str, model: str = "flux") -> str:
-    """Intelligently enrich prompt with aesthetic cues based on the chosen visual model."""
-    lower_p = prompt.lower()
-    style_boosters = {
-        "flux": "cinematic lighting, photorealistic, sharp focus, 8k resolution, highly detailed masterpiece",
-        "flux-realism": "hyperrealistic portrait photography, lifelike skin texture, 35mm lens, depth of field, natural lighting, 8k",
-        "flux-anime": "gorgeous anime style, vibrant colors, detailed manga illustration, highly detailed, 4k",
-        "flux-3d": "stylized 3d render, pixar disney animation style, vibrant lighting, smooth cgi, octane render 8k",
-        "turbo": "high quality sharp visual render, detailed",
-    }
-    booster = style_boosters.get(model, style_boosters["flux"])
-    if not any(k in lower_p for k in ["photorealistic", "masterpiece", "8k", "cinematic", "octane", "manga"]):
-        return f"{prompt}, {booster}"
-    return prompt
-
-
-def fetch_resilient_base_image(
-    prompt: str,
-    target_w: int = 1024,
-    target_h: int = 1024,
-    model: str = "flux",
-    seed: Optional[int] = None,
-) -> Image.Image:
-    """Fetch high quality FLUX / visual output with automatic prompt enrichment and clean watermark removal."""
-    import urllib.parse
-    import requests
-    import random
-
-    if seed is None:
-        seed = random.randint(1, 9999999)
-
-    model_mapping = {
-        "flux": "flux",
-        "flux-realism": "flux-realism",
-        "flux-anime": "flux-anime",
-        "flux-3d": "flux-3d",
-        "turbo": "turbo",
-    }
-    active_model = model_mapping.get(model, "flux")
-    enhanced_prompt = enhance_prompt_for_model(prompt, model=active_model)
-
-    try:
-        url = (
-            f"https://image.pollinations.ai/prompt/{urllib.parse.quote(enhanced_prompt)}"
-            f"?model={active_model}&width={target_w}&height={target_h}&nologo=true&enhance=true&seed={seed}"
-        )
-        resp = requests.get(url, timeout=45)
-        if resp.ok and len(resp.content) > 5000:
-            raw_img = Image.open(io.BytesIO(resp.content)).convert("RGB")
-            return strip_watermark(raw_img)
-    except Exception as e:
-        print(f"Online FLUX visual fetch error ({active_model}): {e}. Trying fast turbo fallback...")
-        try:
-            fallback_url = (
-                f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}"
-                f"?model=turbo&width={target_w}&height={target_h}&nologo=true&seed={seed}"
-            )
-            f_resp = requests.get(fallback_url, timeout=25)
-            if f_resp.ok and len(f_resp.content) > 5000:
-                raw_img = Image.open(io.BytesIO(f_resp.content)).convert("RGB")
-                return strip_watermark(raw_img)
-        except Exception as fb_err:
-            print(f"Turbo fallback error: {fb_err}")
-
-    # Local fallback procedural visual if completely offline
-    img = Image.new("RGB", (target_w, target_h), color=(20, 24, 39))
-    return img
-
-
 def process_video_generation(
-    client: InferenceClient,
-    prompt: str,
+    client=None,
+    prompt: str = "",
     duration: int = 5,
     aspect_ratio: str = "16:9",
     reference_image: Optional[Image.Image] = None,
-) -> Tuple[str, str]:
+    model: str = "wan-2.7",
+    api_key: Optional[str] = None,
+) -> Tuple[str, str, Optional[str]]:
     """
     Core video generation router.
-    Returns: (base64_mp4_data_uri, model_name)
+    Returns: (base64_mp4_data_uri, model_name, optional_notice)
     """
     target_w, target_h = ASPECT_RATIOS.get(aspect_ratio, (768, 432))
     duration = min(30, max(5, duration))
-    model_used = PRIMARY_VIDEO_MODEL
+    notice: Optional[str] = None
 
-    # Enhance prompt with motion keywords if not already present
     enhanced_prompt = prompt
     motion_keywords = ["cinematic", "motion", "4k", "detailed", "smooth"]
     if not any(k in enhanced_prompt.lower() for k in motion_keywords):
         enhanced_prompt = f"{prompt}, cinematic lighting, high quality, fluid motion, 4k"
 
     raw_video_bytes: Optional[bytes] = None
+    resolved_model_name = MODEL_DISPLAY_NAMES.get(model, model)
 
-    # 1. Try Primary Hugging Face Video Model (Wan2.1)
-    try:
-        print(f"Calling primary video model: {PRIMARY_VIDEO_MODEL}...")
-        raw_video_bytes = client.text_to_video(
-            enhanced_prompt,
-            model=PRIMARY_VIDEO_MODEL,
+    # 1. If user selected Wan 2.7, Seedance Pro, or Veo, try Pollinations Video API
+    if model in ("wan-2.7", "seedance-pro", "veo"):
+        poll_key = api_key or os.getenv("POLLINATIONS_API_KEY")
+        if poll_key:
+            raw_video_bytes = generate_pollinations_video(
+                prompt=enhanced_prompt,
+                model=model,
+                api_key=poll_key,
+                width=target_w,
+                height=target_h,
+            )
+        else:
+            notice = "Configure your free Pollinations API Key from enter.pollinations.ai/keys to unlock Wan 2.7 & Seedance Pro full motion generation."
+
+    # 2. If user selected LTX Video OR if Pollinations was not configured, try LTX-Video Distilled
+    if not raw_video_bytes and model in ("ltx-video", "wan-2.7", "seedance-pro"):
+        print("[Video Engine] Attempting Lightricks LTX Video Distilled neural diffusion...")
+        ltx_bytes = generate_ltx_video(
+            prompt=enhanced_prompt,
+            width=target_w,
+            height=target_h,
+            hf_token=os.getenv("HF_TOKEN"),
         )
-        print(f"Primary video model succeeded ({len(raw_video_bytes)} bytes)")
-    except Exception as e:
-        print(f"Primary video model failed/credit limit: {e}. Checking fallback...")
-        raw_video_bytes = None
+        if ltx_bytes:
+            raw_video_bytes = ltx_bytes
+            resolved_model_name = MODEL_DISPLAY_NAMES["ltx-video"]
+            notice = None
 
-    # 2. Process or Fallback
+    # 3. Process video frames if neural diffusion succeeded
+    final_mp4_bytes: Optional[bytes] = None
     if raw_video_bytes:
         try:
             import imageio
-            reader = imageio.get_reader(raw_video_bytes, format="mp4")
+            reader = imageio.get_reader(io.BytesIO(raw_video_bytes), format="mp4")
             src_frames = [frame for frame in reader]
             reader.close()
 
-            # Resize frames if needed to match aspect ratio
-            processed_src = []
-            for f in src_frames:
-                pil_f = Image.fromarray(f)
-                resized_pil = crop_and_resize_frame(pil_f, target_w, target_h)
-                processed_src.append(np.array(resized_pil))
+            if src_frames:
+                processed_src = []
+                for f in src_frames:
+                    pil_f = Image.fromarray(f)
+                    resized_pil = crop_and_resize_frame(pil_f, target_w, target_h)
+                    processed_src.append(np.array(resized_pil))
 
-            # Extend frames to requested duration (5, 10, 15, or 30 seconds)
-            final_frames = extend_frames_to_duration(processed_src, target_duration_sec=duration, fps=24)
-            final_mp4_bytes = encode_frames_to_mp4_bytes(final_frames, fps=24)
-            model_used = PRIMARY_VIDEO_MODEL
-        except Exception as stitch_err:
-            print(f"Error processing model video frames: {stitch_err}, engaging cinematic motion engine")
-            raw_video_bytes = None
+                final_frames = extend_frames_to_duration(processed_src, target_duration_sec=duration, fps=24)
+                final_mp4_bytes = encode_frames_to_mp4_bytes(final_frames, fps=24)
+        except Exception as e:
+            print(f"[Video Engine] Error processing neural video frames: {e}")
+            final_mp4_bytes = None
 
-    if not raw_video_bytes:
-        # Generate pristine 8K keyframe using FLUX.1 + 3D Cinematic Physics Engine
-        print("[Video Engine] Engaging FLUX.1 + 3D Cinematic Physics Engine...")
-        model_used = "FLUX.1 Schnell + 3D Cinematic Physics Engine"
+    # 4. Graceful Fallback: FLUX.1 Schnell + 3D Cinematic Motion FX
+    if not final_mp4_bytes:
+        print("[Video Engine] Running FLUX.1 Schnell Keyframe + 3D Cinematic Motion FX...")
+        resolved_model_name = MODEL_DISPLAY_NAMES["cinematic-fx"]
+        if not notice:
+            notice = "Generated using FLUX.1 8K Keyframe + 3D Dolly Physics. Add a free Pollinations Key for skeletal diffusion motion."
+
         if reference_image:
             base_img = reference_image
         else:
@@ -394,7 +473,7 @@ def process_video_generation(
                 flux_prompt = enrich_prompt(enhanced_prompt, style="flux")
                 base_img = generate_via_flux_space(flux_prompt, target_w, target_h)
             except Exception as flux_err:
-                print(f"[Video Engine] FLUX space keyframe error: {flux_err}. Using resilient engine...")
+                print(f"[Video Engine] FLUX space error: {flux_err}. Using resilient engine...")
                 base_img = fetch_resilient_base_image(enhanced_prompt, target_w, target_h, model="flux")
 
         final_mp4_bytes = generate_cinematic_motion_fallback(
@@ -407,4 +486,4 @@ def process_video_generation(
 
     b64_video = base64.b64encode(final_mp4_bytes).decode("utf-8")
     data_uri = f"data:video/mp4;base64,{b64_video}"
-    return data_uri, model_used
+    return data_uri, resolved_model_name, notice

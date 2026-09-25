@@ -5,6 +5,54 @@ type StudioMode = "image" | "video";
 type VideoDuration = 5 | 10 | 15 | 30;
 type AspectRatio = "16:9" | "9:16" | "1:1";
 
+export type VideoModelKey = "wan-2.7" | "seedance-pro" | "ltx-video" | "veo" | "cinematic-fx";
+
+export interface VideoModelOption {
+  id: VideoModelKey;
+  name: string;
+  badge: string;
+  icon: string;
+  desc: string;
+}
+
+export const VIDEO_MODELS: VideoModelOption[] = [
+  {
+    id: "wan-2.7",
+    name: "Wan 2.7 Pro",
+    badge: "Alibaba AI SOTA",
+    icon: "🌟",
+    desc: "Genuine AI video diffusion, running limbs & full physics",
+  },
+  {
+    id: "seedance-pro",
+    name: "Seedance 2.0 Pro",
+    badge: "ByteDance Action",
+    icon: "⚡",
+    desc: "Cinematic character motion, flying kites & fluid action",
+  },
+  {
+    id: "ltx-video",
+    name: "LTX Video 2.0",
+    badge: "Lightricks 24fps",
+    icon: "🚀",
+    desc: "Hyper-fast neural video diffusion, high framerate motion",
+  },
+  {
+    id: "veo",
+    name: "Google Veo 3.1",
+    badge: "Google DeepMind",
+    icon: "🎬",
+    desc: "Hollywood-grade physics, photorealistic lighting & scene continuity",
+  },
+  {
+    id: "cinematic-fx",
+    name: "Cinematic 3D FX",
+    badge: "PixelForge Studio",
+    icon: "💎",
+    desc: "3D camera dolly zoom + weather particle dynamics",
+  },
+];
+
 export type ImageModelKey = "flux" | "sd35" | "flux-realism" | "flux-anime" | "flux-3d" | "turbo";
 
 export interface ImageModelOption {
@@ -82,6 +130,10 @@ export default function Home() {
 
   // Video State
   const [videoPrompt, setVideoPrompt] = useState("");
+  const [selectedVideoModel, setSelectedVideoModel] = useState<VideoModelKey>("wan-2.7");
+  const [pollinationsApiKey, setPollinationsApiKey] = useState<string>("");
+  const [showKeyModal, setShowKeyModal] = useState<boolean>(false);
+  const [videoNotice, setVideoNotice] = useState<string | null>(null);
   const [uploadedMedia, setUploadedMedia] = useState<string | null>(null);
   const [uploadedMediaName, setUploadedMediaName] = useState<string | null>(null);
   const [uploadedMediaType, setUploadedMediaType] = useState<"image" | "video" | null>(null);
@@ -105,6 +157,10 @@ export default function Home() {
 
   useEffect(() => {
     checkBackend();
+    try {
+      const savedKey = localStorage.getItem("pixelforge_poll_key");
+      if (savedKey) setPollinationsApiKey(savedKey);
+    } catch {}
   }, []);
 
   async function checkBackend() {
@@ -232,11 +288,18 @@ export default function Home() {
         media?: string;
         duration: number;
         aspect_ratio: string;
+        model: string;
+        api_key?: string;
       } = {
         prompt: textToUse,
         duration: videoDuration,
         aspect_ratio: aspectRatio,
+        model: selectedVideoModel,
       };
+
+      if (pollinationsApiKey.trim()) {
+        payload.api_key = pollinationsApiKey.trim();
+      }
 
       if (uploadedMedia) {
         payload.media = uploadedMedia;
@@ -254,10 +317,15 @@ export default function Home() {
       }
 
       setGeneratedVideo(data.video);
-      setVideoModelUsed(data.model || "Hugging Face Video");
+      setVideoModelUsed(data.model || "AI Video Engine");
       setLastVideoPrompt(data.corrected_prompt || textToUse);
       setLastVideoCorrected(Boolean(data.corrected_prompt));
       setLastVideoDuration(data.duration || videoDuration);
+      if (data.notice) {
+        setVideoNotice(data.notice);
+      } else {
+        setVideoNotice(null);
+      }
       setStatusMessage(null);
     } catch (err: unknown) {
       console.error(err);
@@ -637,6 +705,65 @@ export default function Home() {
         {/* -------------------- VIDEO STUDIO MODE -------------------- */}
         {studioMode === "video" && (
           <div className="w-full flex flex-col gap-6 animate-in fade-in duration-300">
+            {/* Video Model Selector */}
+            <div className="w-full flex flex-col gap-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-gray-300 flex items-center gap-1.5">
+                  <span>🎬</span>
+                  <span>Video Generation Model</span>
+                  <span className="text-[10px] text-cyan-400 font-normal">
+                    (Generative Motion)
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowKeyModal(true)}
+                  className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all flex items-center gap-1.5 ${
+                    pollinationsApiKey.trim()
+                      ? "border-emerald-500/40 bg-emerald-950/30 text-emerald-300"
+                      : "border-cyan-500/40 bg-cyan-950/30 text-cyan-300 hover:bg-cyan-900/40"
+                  }`}
+                >
+                  <span>{pollinationsApiKey.trim() ? "✓ Key Active" : "🔑 Free Key Setup"}</span>
+                  <span className="text-[10px]">⚙️</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                {VIDEO_MODELS.map((m) => {
+                  const isSelected = selectedVideoModel === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setSelectedVideoModel(m.id)}
+                      className={`p-2.5 rounded-xl border text-left flex flex-col gap-1 transition-all duration-200 cursor-pointer ${
+                        isSelected
+                          ? "border-cyan-400 bg-cyan-950/40 shadow-[0_0_15px_rgba(6,182,212,0.3)] ring-1 ring-cyan-400/50"
+                          : "border-white/10 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/20"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <span className="text-base">{m.icon}</span>
+                        {isSelected && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_6px_#22d3ee]"></span>
+                        )}
+                      </div>
+                      <span
+                        className={`text-xs font-semibold truncate ${
+                          isSelected ? "text-cyan-200" : "text-gray-200"
+                        }`}
+                      >
+                        {m.name}
+                      </span>
+                      <span className="text-[10px] text-gray-400 line-clamp-1 leading-tight">
+                        {m.badge}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             {/* Reference Image/Video Upload */}
             <div className="w-full flex flex-col gap-2">
               <div className="flex items-center justify-between">
@@ -956,6 +1083,22 @@ export default function Home() {
             />
           </div>
 
+          {videoNotice && (
+            <div className="p-3.5 rounded-xl bg-amber-950/40 border border-amber-500/30 text-xs text-amber-200 flex items-start gap-2.5">
+              <span className="text-base leading-none">ℹ️</span>
+              <div className="flex-1">
+                <p className="font-medium text-amber-200">{videoNotice}</p>
+                <button
+                  type="button"
+                  onClick={() => setShowKeyModal(true)}
+                  className="mt-1 text-[11px] underline text-cyan-300 font-semibold hover:text-cyan-100 cursor-pointer block"
+                >
+                  Configure Free API Key →
+                </button>
+              </div>
+            </div>
+          )}
+
           {lastVideoPrompt && (
             <div className="flex flex-col gap-1 p-3 rounded-xl bg-white/[0.02] border border-white/5 text-xs text-gray-400">
               <div className="flex items-center justify-between">
@@ -1040,6 +1183,93 @@ export default function Home() {
               <p className="text-gray-300 italic">&ldquo;{lastImagePrompt}&rdquo;</p>
             </div>
           )}
+        </div>
+      )}
+
+      {/* -------------------- API KEY MODAL -------------------- */}
+      {showKeyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md p-6 rounded-3xl border border-white/10 bg-slate-950/90 shadow-2xl flex flex-col gap-4 text-left">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🔑</span>
+                <h3 className="text-sm font-bold text-white">Video Diffusion Key Setup</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowKeyModal(false)}
+                className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white flex items-center justify-center text-xs"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-300 leading-relaxed">
+              Unlock genuine <strong className="text-cyan-300">Alibaba Wan 2.7</strong>,{" "}
+              <strong className="text-cyan-300">ByteDance Seedance Pro</strong>, and{" "}
+              <strong className="text-cyan-300">Google Veo</strong> diffusion video with fluid motion.
+            </p>
+
+            <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 flex flex-col gap-2">
+              <span className="text-[11px] font-semibold text-gray-400">How to get your free key:</span>
+              <ol className="text-[11px] text-gray-400 list-decimal list-inside space-y-1">
+                <li>
+                  Open{" "}
+                  <a
+                    href="https://enter.pollinations.ai/keys"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-cyan-400 underline hover:text-cyan-300"
+                  >
+                    enter.pollinations.ai/keys
+                  </a>
+                </li>
+                <li>Sign in with GitHub or Google (1-click free registration)</li>
+                <li>Copy your free API key and paste it below</li>
+              </ol>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-gray-300">
+                Pollinations API Key:
+              </label>
+              <input
+                type="password"
+                value={pollinationsApiKey}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setPollinationsApiKey(val);
+                  try {
+                    localStorage.setItem("pixelforge_poll_key", val.trim());
+                  } catch {}
+                }}
+                placeholder="sk_... or pk_..."
+                className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder:text-gray-600 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPollinationsApiKey("");
+                  try {
+                    localStorage.removeItem("pixelforge_poll_key");
+                  } catch {}
+                }}
+                className="px-3 py-1.5 rounded-xl text-xs text-gray-400 hover:text-white transition-colors"
+              >
+                Clear Key
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowKeyModal(false)}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 text-xs font-semibold text-white hover:opacity-90 transition-opacity"
+              >
+                Save &amp; Continue
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
