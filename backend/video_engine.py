@@ -224,7 +224,7 @@ def fetch_resilient_base_image(
             f"https://image.pollinations.ai/prompt/{urllib.parse.quote(enhanced_prompt)}"
             f"?model={active_model}&width={target_w}&height={target_h}&nologo=true&enhance=true&seed={seed}"
         )
-        resp = requests.get(url, timeout=25)
+        resp = requests.get(url, timeout=45)
         if resp.ok and len(resp.content) > 5000:
             raw_img = Image.open(io.BytesIO(resp.content)).convert("RGB")
             return strip_watermark(raw_img)
@@ -235,7 +235,7 @@ def fetch_resilient_base_image(
                 f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}"
                 f"?model=turbo&width={target_w}&height={target_h}&nologo=true&seed={seed}"
             )
-            f_resp = requests.get(fallback_url, timeout=15)
+            f_resp = requests.get(fallback_url, timeout=25)
             if f_resp.ok and len(f_resp.content) > 5000:
                 raw_img = Image.open(io.BytesIO(f_resp.content)).convert("RGB")
                 return strip_watermark(raw_img)
