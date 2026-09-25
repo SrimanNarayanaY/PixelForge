@@ -213,7 +213,7 @@ def generate_video(req: GenerateVideoRequest):
     if raw_prompt:
         corrected_prompt, was_corrected = correct_prompt(raw_prompt)
         if was_corrected:
-            print(f"✨ Auto-corrected video prompt: '{raw_prompt}' -> '{corrected_prompt}'")
+            print(f"[PromptCorrector] Auto-corrected video prompt: '{raw_prompt}' -> '{corrected_prompt}'")
     user_prompt = corrected_prompt
 
     if not HF_TOKEN:
