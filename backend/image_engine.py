@@ -91,7 +91,7 @@ def generate_flagship_image(
     """
     model_key = (model or "flux").lower().strip()
     enriched = enrich_prompt(prompt, style=model_key)
-    print(f"🎨 Generating image with enriched prompt: {enriched[:90]}... (model: {model_key})")
+    print(f"[Engine] Generating image with enriched prompt: {enriched[:90]}... (model: {model_key})")
 
     model_display_names = {
         "flux": "FLUX.1 Schnell (Photorealistic)",
@@ -107,7 +107,7 @@ def generate_flagship_image(
 
     if model_key == "sd35":
         try:
-            print("🚀 Invoking Stability AI SD 3.5 Large...")
+            print("[Engine] Invoking Stability AI SD 3.5 Large...")
             img = generate_via_sd35_space(enriched, width, height)
         except Exception as sd_err:
             print(f"SD 3.5 error: {sd_err}. Falling back to FLUX.1 Schnell...")
@@ -119,7 +119,7 @@ def generate_flagship_image(
 
     if img is None:
         try:
-            print("🚀 Invoking Black Forest Labs FLUX.1 Schnell...")
+            print("[Engine] Invoking Black Forest Labs FLUX.1 Schnell...")
             img = generate_via_flux_space(enriched, width, height)
         except Exception as flux_err:
             print(f"FLUX.1 error: {flux_err}. Falling back to SD 3.5 Large...")
