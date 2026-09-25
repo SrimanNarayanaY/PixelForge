@@ -37,6 +37,7 @@ VISION_MODEL = "google/gemma-3-12b-it"
 class GenerateRequest(BaseModel):
     prompt: Optional[str] = ""
     image: Optional[str] = None  # Base64 data URL or string
+    model: Optional[str] = "flux"  # "flux", "flux-realism", "flux-anime", "flux-3d", "turbo"
 
 
 class GenerateVideoRequest(BaseModel):
@@ -109,23 +110,30 @@ def analyze_reference_image(client: InferenceClient, data_uri: str) -> str:
         return "a visual scene matching the uploaded reference image"
 
 
-def generate_flux_image(client: InferenceClient, prompt: str) -> str:
-    """Generate image using FLUX.1 with fallback to SDXL and resilient engine."""
+IMAGE_MODEL_NAMES = {
+    "flux": "FLUX.1 Schnell (Photorealistic)",
+    "flux-realism": "FLUX Realism (Cinematic)",
+    "flux-anime": "FLUX Anime (Manga Studio)",
+    "flux-3d": "FLUX 3D (Pixar CGI)",
+    "turbo": "Turbo Speed (Fast)",
+}
+
+
+def generate_flux_image(client: Optional[InferenceClient], prompt: str, model: str = "flux") -> tuple[str, str]:
+    """Generate image using requested FLUX model with prompt enrichment and watermark removal."""
     img: Optional[Image.Image] = None
+    model_name = IMAGE_MODEL_NAMES.get(model, "FLUX.1 Schnell")
+
     try:
-        img = client.text_to_image(prompt, model=PRIMARY_IMAGE_MODEL)
-    except Exception as primary_err:
-        print(f"Primary model error: {primary_err}. Falling back to SDXL...")
-        try:
-            img = client.text_to_image(prompt, model=FALLBACK_IMAGE_MODEL)
-        except Exception as fallback_err:
-            print(f"SDXL fallback error: {fallback_err}. Using resilient visual engine...")
-            img = fetch_resilient_base_image(prompt, 1024, 1024)
+        img = fetch_resilient_base_image(prompt, 1024, 1024, model=model)
+    except Exception as err:
+        print(f"Direct generation error: {err}. Retrying with base FLUX...")
+        img = fetch_resilient_base_image(prompt, 1024, 1024, model="flux")
 
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
     buffer.seek(0)
-    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+    return base64.b64encode(buffer.getvalue()).decode("utf-8"), model_name
 
 
 @app.post("/generate")
@@ -190,11 +198,13 @@ def generate(req: GenerateRequest):
     print(f"Final generation prompt: {final_prompt[:80]}...")
 
     try:
-        b64_output = generate_flux_image(client, final_prompt)
+        requested_model = (req.model or "flux").strip().lower()
+        b64_output, model_display_name = generate_flux_image(client, final_prompt, model=requested_model)
         return JSONResponse({
             "image": b64_output,
             "prompt": final_prompt,
             "corrected_prompt": corrected_prompt if was_corrected else None,
+            "model": model_display_name,
         })
     except Exception as gen_err:
         print(f"Generation failed: {gen_err}")

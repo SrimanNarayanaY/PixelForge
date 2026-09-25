@@ -168,17 +168,79 @@ def generate_cinematic_motion_fallback(
     return encode_frames_to_mp4_bytes(frames, fps=fps)
 
 
-def fetch_resilient_base_image(prompt: str, target_w: int, target_h: int) -> Image.Image:
-    """Fetch high quality base visual even if HF credits are exhausted."""
+def strip_watermark(img: Image.Image) -> Image.Image:
+    """Cleanly remove bottom watermark logo without distortion and retain requested size."""
+    w, h = img.size
+    # Crop the bottom 36 pixels where the logo is located
+    crop_h = max(100, h - 36)
+    cropped = img.crop((0, 0, w, crop_h))
+    # Resample back to original dimensions with high-quality Lanczos interpolation
+    return cropped.resize((w, h), Image.Resampling.LANCZOS)
+
+
+def enhance_prompt_for_model(prompt: str, model: str = "flux") -> str:
+    """Intelligently enrich prompt with aesthetic cues based on the chosen visual model."""
+    lower_p = prompt.lower()
+    style_boosters = {
+        "flux": "cinematic lighting, photorealistic, sharp focus, 8k resolution, highly detailed masterpiece",
+        "flux-realism": "hyperrealistic portrait photography, lifelike skin texture, 35mm lens, depth of field, natural lighting, 8k",
+        "flux-anime": "gorgeous anime style, vibrant colors, detailed manga illustration, highly detailed, 4k",
+        "flux-3d": "stylized 3d render, pixar disney animation style, vibrant lighting, smooth cgi, octane render 8k",
+        "turbo": "high quality sharp visual render, detailed",
+    }
+    booster = style_boosters.get(model, style_boosters["flux"])
+    if not any(k in lower_p for k in ["photorealistic", "masterpiece", "8k", "cinematic", "octane", "manga"]):
+        return f"{prompt}, {booster}"
+    return prompt
+
+
+def fetch_resilient_base_image(
+    prompt: str,
+    target_w: int = 1024,
+    target_h: int = 1024,
+    model: str = "flux",
+    seed: Optional[int] = None,
+) -> Image.Image:
+    """Fetch high quality FLUX / visual output with automatic prompt enrichment and clean watermark removal."""
     import urllib.parse
     import requests
+    import random
+
+    if seed is None:
+        seed = random.randint(1, 9999999)
+
+    model_mapping = {
+        "flux": "flux",
+        "flux-realism": "flux-realism",
+        "flux-anime": "flux-anime",
+        "flux-3d": "flux-3d",
+        "turbo": "turbo",
+    }
+    active_model = model_mapping.get(model, "flux")
+    enhanced_prompt = enhance_prompt_for_model(prompt, model=active_model)
+
     try:
-        url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?width={target_w}&height={target_h}&nologo=true&seed=42"
-        resp = requests.get(url, timeout=12)
-        if resp.ok:
-            return Image.open(io.BytesIO(resp.content)).convert("RGB")
+        url = (
+            f"https://image.pollinations.ai/prompt/{urllib.parse.quote(enhanced_prompt)}"
+            f"?model={active_model}&width={target_w}&height={target_h}&nologo=true&enhance=true&seed={seed}"
+        )
+        resp = requests.get(url, timeout=25)
+        if resp.ok and len(resp.content) > 5000:
+            raw_img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+            return strip_watermark(raw_img)
     except Exception as e:
-        print(f"Online visual fetch fallback error: {e}")
+        print(f"Online FLUX visual fetch error ({active_model}): {e}. Trying fast turbo fallback...")
+        try:
+            fallback_url = (
+                f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}"
+                f"?model=turbo&width={target_w}&height={target_h}&nologo=true&seed={seed}"
+            )
+            f_resp = requests.get(fallback_url, timeout=15)
+            if f_resp.ok and len(f_resp.content) > 5000:
+                raw_img = Image.open(io.BytesIO(f_resp.content)).convert("RGB")
+                return strip_watermark(raw_img)
+        except Exception as fb_err:
+            print(f"Turbo fallback error: {fb_err}")
 
     # Local fallback procedural visual if completely offline
     img = Image.new("RGB", (target_w, target_h), color=(20, 24, 39))
